@@ -20,7 +20,7 @@ import (
 	"strings"
 
 	"github.com/casbin/casbin/model"
-	_ "github.com/lib/pq" // This is for MySQL initialization.
+	_ "github.com/lib/pq"
 )
 
 // Adapter represents the MySQL adapter for policy storage.
@@ -45,7 +45,10 @@ func (a *Adapter) createDatabase() error {
 	}
 	defer db.Close()
 
-	_, err = db.Exec("CREATE DATABASE IF NOT EXISTS casbin")
+	_, err = db.Exec("CREATE DATABASE casbin")
+	if err != nil {
+		return nil
+	}
 	return err
 }
 
@@ -54,7 +57,7 @@ func (a *Adapter) open() {
 		panic(err)
 	}
 
-	db, err := sql.Open(a.driverName, a.dataSourceName+"casbin")
+	db, err := sql.Open(a.driverName, a.dataSourceName)
 	if err != nil {
 		panic(err)
 	}
