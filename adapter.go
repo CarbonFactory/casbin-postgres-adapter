@@ -15,53 +15,36 @@
 package adapter
 
 import (
-	"database/sql"
-	"errors"
-	"strings"
-
 	"github.com/casbin/casbin/model"
-	_ "github.com/lib/pq"
+	"github.com/casbin/casbin/persist"
+	"github.com/go-pg/pg"
 )
 
 // Adapter represents the MySQL adapter for policy storage.
 type Adapter struct {
-	driverName     string
-	dataSourceName string
-	db             *sql.DB
+	user     string
+	password string
+	database string
+	db       *pg.DB
 }
 
 // NewAdapter is the constructor for Adapter.
-func NewAdapter(driverName string, dataSourceName string) *Adapter {
+func NewAdapter(user string, password string, database string) *Adapter {
 	a := Adapter{}
-	a.driverName = driverName
-	a.dataSourceName = dataSourceName
+	a.user = user
+	a.password = password
+	a.database = database
+
 	return &a
 }
 
-func (a *Adapter) createDatabase() error {
-	db, err := sql.Open(a.driverName, a.dataSourceName)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-
-	_, err = db.Exec("CREATE DATABASE casbin")
-	if err != nil {
-		return nil
-	}
-	return err
-}
-
 func (a *Adapter) open() {
-	if err := a.createDatabase(); err != nil {
-		panic(err)
-	}
 
-	db, err := sql.Open(a.driverName, a.dataSourceName)
-	if err != nil {
-		panic(err)
-	}
-
+	db := pg.Connect(&pg.Options{
+		User:     a.user,
+		Password: a.password,
+		Database: a.database,
+	})
 	a.db = db
 
 	a.createTable()
@@ -72,7 +55,8 @@ func (a *Adapter) close() {
 }
 
 func (a *Adapter) createTable() {
-	_, err := a.db.Exec("CREATE table IF NOT EXISTS policy (ptype VARCHAR(10), v0 VARCHAR(256), v1 VARCHAR(256), v2 VARCHAR(256), v3 VARCHAR(256), v4 VARCHAR(256), v5 VARCHAR(256))")
+
+	_, err := a.db.Exec("CREATE table IF NOT EXISTS policy (p_type VARCHAR(10), v0 VARCHAR(256), v1 VARCHAR(256), v2 VARCHAR(256), v3 VARCHAR(256), v4 VARCHAR(256), v5 VARCHAR(256))")
 	if err != nil {
 		panic(err)
 	}
@@ -85,78 +69,84 @@ func (a *Adapter) dropTable() {
 	}
 }
 
-func loadPolicyLine(line string, model model.Model) {
-	if line == "" {
-		return
+func loadPolicyLine(line CasbinRule, model model.Model) {
+
+	lineText := line.PType
+	if line.V0 != "" {
+		lineText += ", " + line.V0
+	}
+	if line.V1 != "" {
+		lineText += ", " + line.V1
+	}
+	if line.V2 != "" {
+		lineText += ", " + line.V2
+	}
+	if line.V3 != "" {
+		lineText += ", " + line.V3
+	}
+	if line.V4 != "" {
+		lineText += ", " + line.V4
+	}
+	if line.V5 != "" {
+		lineText += ", " + line.V5
 	}
 
-	tokens := strings.Split(line, ", ")
+	persist.LoadPolicyLine(lineText, model)
+}
 
-	key := tokens[0]
-	sec := key[:1]
-	model[sec][key].Policy = append(model[sec][key].Policy, tokens[1:])
+func savePolicyLine(ptype string, rule []string) CasbinRule {
+	line := CasbinRule{}
+
+	line.PType = ptype
+	if len(rule) > 0 {
+		line.V0 = rule[0]
+	}
+	if len(rule) > 1 {
+		line.V1 = rule[1]
+	}
+	if len(rule) > 2 {
+		line.V2 = rule[2]
+	}
+	if len(rule) > 3 {
+		line.V3 = rule[3]
+	}
+	if len(rule) > 4 {
+		line.V4 = rule[4]
+	}
+	if len(rule) > 5 {
+		line.V5 = rule[5]
+	}
+
+	return line
+}
+
+type CasbinRule struct {
+	TableName struct{} `sql:"policy" pg:",discard_unknown_columns" `
+	PType     string   `sql:",pType" db:"p_type" `
+	V0        string   `sql:",v0" db:"v0" `
+	V1        string   `sql:",v1" db:"v1" `
+	V2        string   `sql:",v2" db:"v2" `
+	V3        string   `sql:",v3" db:"v3" `
+	V4        string   `sql:",v4" db:"v4" `
+	V5        string   `sql:",v5" db:"v5" `
 }
 
 // LoadPolicy loads policy from database.
 func (a *Adapter) LoadPolicy(model model.Model) error {
+
 	a.open()
-	defer a.close()
+	// defer a.close()
 
-	var (
-		ptype string
-		v0    string
-		v1    string
-		v2    string
-		v3    string
-		v4    string
-		v5    string
-	)
+	var lines []CasbinRule
+	sqlstr := "select * from policy"
 
-	rows, err := a.db.Query("select * from policy")
+	_, err := a.db.Query(&lines, sqlstr)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		err := rows.Scan(&ptype, &v1, &v2, &v3, &v4)
-		if err != nil {
-			return err
-		}
 
-		line := ptype
-		if v0 != "" {
-			line += ", " + v0
-		}
-		if v1 != "" {
-			line += ", " + v1
-		}
-		if v2 != "" {
-			line += ", " + v2
-		}
-		if v3 != "" {
-			line += ", " + v3
-		}
-		if v4 != "" {
-			line += ", " + v4
-		}
-		if v5 != "" {
-			line += ", " + v5
-		}
-
+	for _, line := range lines {
 		loadPolicyLine(line, model)
-	}
-	err = rows.Err()
-	return err
-}
-
-func (a *Adapter) writeTableLine(stm *sql.Stmt, ptype string, rule []string) error {
-	params := make([]interface{}, 7)
-	params = append(params, ptype)
-	for i, v := range rule {
-		params[i] = v
-	}
-	if _, err := stm.Exec(params...); err != nil {
-		return err
 	}
 	return nil
 }
@@ -164,20 +154,16 @@ func (a *Adapter) writeTableLine(stm *sql.Stmt, ptype string, rule []string) err
 // SavePolicy saves policy to database.
 func (a *Adapter) SavePolicy(model model.Model) error {
 	a.open()
-	defer a.close()
+	// defer a.close()
 
 	a.dropTable()
 	a.createTable()
 
-	stm, err := a.db.Prepare("insert into policy values($1, $2, $3, $4, $5, $6, $7)")
-	if err != nil {
-		return err
-	}
-	defer stm.Close()
-
 	for ptype, ast := range model["p"] {
 		for _, rule := range ast.Policy {
-			if err = a.writeTableLine(stm, ptype, rule); err != nil {
+			line := savePolicyLine(ptype, rule)
+			err := a.db.Insert(&line)
+			if err != nil {
 				return err
 			}
 		}
@@ -185,22 +171,55 @@ func (a *Adapter) SavePolicy(model model.Model) error {
 
 	for ptype, ast := range model["g"] {
 		for _, rule := range ast.Policy {
-			if err = a.writeTableLine(stm, ptype, rule); err != nil {
+			line := savePolicyLine(ptype, rule)
+			err := a.db.Insert(&line)
+			if err != nil {
 				return err
 			}
 		}
 	}
+
 	return nil
 }
 
-func (a *Adapter) AddPolicy(sec string, ptype string, policy []string) error {
-	return errors.New("not implemented")
+func (a *Adapter) AddPolicy(sec string, ptype string, rule []string) error {
+
+	line := savePolicyLine(ptype, rule)
+	err := a.db.Insert(&line)
+	if err != nil {
+		return err
+	}
+	return err
 }
 
-func (a *Adapter) RemovePolicy(sec string, ptype string, policy []string) error {
-	return errors.New("not implemented")
+func (a *Adapter) RemovePolicy(sec string, ptype string, rule []string) error {
+	line := savePolicyLine(ptype, rule)
+	err := a.db.Delete(&line) //can't use db.Delete as we're not using primary key http://jinzhu.me/gorm/crud.html#delete
+	return err
 }
 
 func (a *Adapter) RemoveFilteredPolicy(sec string, ptype string, fieldIndex int, fieldValues ...string) error {
-	return errors.New("not implemented")
+	line := CasbinRule{}
+
+	line.PType = ptype
+	if fieldIndex <= 0 && 0 < fieldIndex+len(fieldValues) {
+		line.V0 = fieldValues[0-fieldIndex]
+	}
+	if fieldIndex <= 1 && 1 < fieldIndex+len(fieldValues) {
+		line.V1 = fieldValues[1-fieldIndex]
+	}
+	if fieldIndex <= 2 && 2 < fieldIndex+len(fieldValues) {
+		line.V2 = fieldValues[2-fieldIndex]
+	}
+	if fieldIndex <= 3 && 3 < fieldIndex+len(fieldValues) {
+		line.V3 = fieldValues[3-fieldIndex]
+	}
+	if fieldIndex <= 4 && 4 < fieldIndex+len(fieldValues) {
+		line.V4 = fieldValues[4-fieldIndex]
+	}
+	if fieldIndex <= 5 && 5 < fieldIndex+len(fieldValues) {
+		line.V5 = fieldValues[5-fieldIndex]
+	}
+	err := a.db.Delete(&line)
+	return err
 }
