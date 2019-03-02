@@ -1,4 +1,4 @@
-module github.com/going/casbin-postgres-adapter
+module github.com/CarbonFactory/casbin-postgres-adapter
 
 require (
 	github.com/casbin/casbin v1.8.0
