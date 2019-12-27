@@ -29,11 +29,12 @@ type Adapter struct {
 }
 
 // NewAdapter is the constructor for Adapter.
-func NewAdapter(user string, password string, database string) *Adapter {
+func NewAdapter(user string, password string, database string, addr string) *Adapter {
 	a := Adapter{}
 	a.user = user
 	a.password = password
 	a.database = database
+	a.addr = addr
 
 	return &a
 }
@@ -44,6 +45,7 @@ func (a *Adapter) open() {
 		User:     a.user,
 		Password: a.password,
 		Database: a.database,
+		Addr:     a.addr,
 	})
 	a.db = db
 
@@ -56,14 +58,14 @@ func (a *Adapter) close() {
 
 func (a *Adapter) createTable() {
 
-	_, err := a.db.Exec("CREATE table IF NOT EXISTS policy (p_type VARCHAR(10), v0 VARCHAR(256), v1 VARCHAR(256), v2 VARCHAR(256), v3 VARCHAR(256), v4 VARCHAR(256), v5 VARCHAR(256))")
+	_, err := a.db.Exec("CREATE table IF NOT EXISTS x_policy (p_type VARCHAR(10), v0 VARCHAR(256), v1 VARCHAR(256), v2 VARCHAR(256), v3 VARCHAR(256), v4 VARCHAR(256), v5 VARCHAR(256))")
 	if err != nil {
 		panic(err)
 	}
 }
 
 func (a *Adapter) dropTable() {
-	_, err := a.db.Exec("DROP table policy")
+	_, err := a.db.Exec("DROP table x_policy")
 	if err != nil {
 		panic(err)
 	}
@@ -121,7 +123,7 @@ func savePolicyLine(ptype string, rule []string) CasbinRule {
 }
 
 type CasbinRule struct {
-	TableName struct{} `sql:"policy" pg:",discard_unknown_columns" `
+	TableName struct{} `sql:"x_policy" pg:",discard_unknown_columns" `
 	PType     string   `sql:",pType" db:"p_type" `
 	V0        string   `sql:",v0" db:"v0" `
 	V1        string   `sql:",v1" db:"v1" `
